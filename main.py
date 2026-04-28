@@ -2,11 +2,12 @@ import telebot
 import yt_dlp
 import os
 import threading
+import sqlite3
 from telebot import types
 from flask import Flask
 from threading import Thread
 
-# --- RENDER VEB-SERVER ---
+# --- RENDER SERVERINI "UYG'OQ" TUTISH ---
 app = Flask('')
 @app.route('/')
 def home(): return "Bot is Active!"
@@ -21,26 +22,30 @@ def keep_alive():
     t.start()
 
 # --- BOT SOZLAMALARI ---
-TOKEN = "8721093015:AAGpOgNz4npcO2fA-rNdMecN4T0mMlI-Y6A" 
+TOKEN = "8721093015:AAGpOgNz4npcO2fA-rNdMecN4T0mMlI-Y6A" # BotFather'dan olingan token
 bot = telebot.TeleBot(TOKEN)
 BOT_USERNAME = "@uzbemediarobot"
+
+# --- BAZA (TEZKORLIK UCHUN) ---
+conn = sqlite3.connect('cache.db', check_same_thread=False)
+cur = conn.cursor()
+cur.execute('CREATE TABLE IF NOT EXISTS storage (query TEXT, file_id TEXT, title TEXT)')
+conn.commit()
 
 if not os.path.exists('downloads'):
     os.makedirs('downloads')
 
+# --- YUKLASH SOZLAMALARI (TURBO) ---
 YTDL_OPTS = {
     'format': 'bestaudio/best',
     'outtmpl': 'downloads/%(title)s.%(ext)s',
     'noplaylist': True,
     'quiet': True,
-    'no_warnings': True,
-    'max_filesize': 50 * 1024 * 1024,
-    'http_headers': {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-    }
+    'socket_timeout': 10,
+    'source_address': '0.0.0.0',
+    'default_search': 'ytsearch1:',
 }
 
-# --- MENU TUGMALARI ---
 def main_keyboard():
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
     markup.add(types.KeyboardButton("🔍 Nom orqali qidirish"))
@@ -48,62 +53,53 @@ def main_keyboard():
 
 @bot.message_handler(commands=['start'])
 def start(message):
-    bot.send_message(message.chat.id, 
-                     f"👋 **Salom! Men {BOT_USERNAME} botiman.**\n\nLink yuboring yoki quyidagi tugmani bosing:", 
-                     parse_mode="Markdown", 
-                     reply_markup=main_keyboard())
+    bot.send_message(message.chat.id, f"👋 Salom! Men {BOT_USERNAME} botiman.", reply_markup=main_keyboard())
 
-# --- QIDIRISH COMMANDASI ---
 @bot.message_handler(func=lambda m: m.text == "🔍 Nom orqali qidirish")
 def ask_search(message):
-    msg = bot.send_message(message.chat.id, "🎶 Musiqa nomi yoki ijrochisini yozing:", 
-                           reply_markup=types.ReplyKeyboardRemove())
-    # Foydalanuvchining keyingi yozgan xabarini kutadi
+    msg = bot.send_message(message.chat.id, "🎶 Musiqa nomini yozing:")
     bot.register_next_step_handler(msg, process_search)
 
 def process_search(message):
-    query = message.text
-    chat_id = message.chat.id
-    
-    if query == "/start": 
-        start(message)
+    query = message.text.strip().lower()
+    if query == "/start": return start(message)
+
+    # 1. BAZADAN TEKSHIRISH (Agar oldin qidirilgan bo'lsa)
+    cur.execute("SELECT file_id, title FROM storage WHERE query = ?", (query,))
+    res = cur.fetchone()
+    if res:
+        bot.send_audio(message.chat.id, res[0], caption=f"🎵 {res[1]}\n\n👤 {BOT_USERNAME}")
         return
 
-    wait = bot.send_message(chat_id, "🔎 Qidirilmoqda...", reply_markup=main_keyboard())
-    threading.Thread(target=download_core, args=(chat_id, f"ytsearch1:{query}", wait.message_id, False)).start()
+    wait = bot.send_message(message.chat.id, "🔎")
+    threading.Thread(target=download_core, args=(message.chat.id, f"ytsearch1:{query}", wait.message_id, query)).start()
 
-# --- LINKLARNI TUTISH ---
 @bot.message_handler(func=lambda m: "http" in m.text)
 def handle_link(message):
-    chat_id = message.chat.id
-    wait = bot.send_message(chat_id, "📥 Link tahlil qilinmoqda...")
-    threading.Thread(target=download_core, args=(chat_id, message.text, wait.message_id, True)).start()
+    wait = bot.send_message(message.chat.id, "📥 Link tahlil qilinmoqda...")
+    threading.Thread(target=download_core, args=(message.chat.id, message.text, wait.message_id, None)).start()
 
-# --- YUKLASH MARKAZI ---
-def download_core(chat_id, query, wait_id, is_link):
+def download_core(chat_id, search_q, wait_id, original_query):
     try:
         with yt_dlp.YoutubeDL(YTDL_OPTS) as ydl:
-            info = ydl.extract_info(query, download=True)
+            info = ydl.extract_info(search_q, download=True)
             entry = info['entries'][0] if 'entries' in info else info
             file_path = ydl.prepare_filename(entry)
-            title = entry.get('title', "Musiqa")
+            title = entry.get('title', "Media")
 
             with open(file_path, 'rb') as f:
-                if is_link:
-                    # Link bo'lsa video va audio yuborish
-                    bot.send_video(chat_id, f, caption=f"🎬 {title}\n\n👤 {BOT_USERNAME}")
-                    f.seek(0) # Faylni boshidan o'qish
-                    bot.send_audio(chat_id, f, caption=f"🎵 {title}\n\n👤 {BOT_USERNAME}")
-                else:
-                    # Qidiruv bo'lsa faqat audio
-                    bot.send_audio(chat_id, f, caption=f"🎵 {title}\n\n👤 {BOT_USERNAME}")
+                sent = bot.send_audio(chat_id, f, caption=f"🎵 {title}\n\n👤 {BOT_USERNAME}")
+                
+                # BAZAGA SAQLASH (Keyingi safar tezroq yuborish uchun)
+                if original_query:
+                    cur.execute("INSERT INTO storage VALUES (?, ?, ?)", (original_query, sent.audio.file_id, title))
+                    conn.commit()
 
-            if os.path.exists(file_path):
-                os.remove(file_path)
+            if os.path.exists(file_path): os.remove(file_path)
             bot.delete_message(chat_id, wait_id)
 
     except Exception:
-        bot.edit_message_text("❌ Topilmadi yoki fayl juda katta (Max: 50MB).", chat_id, wait_id)
+        bot.edit_message_text("❌ Topilmadi. Iltimos, aniqroq yozing.", chat_id, wait_id)
 
 if __name__ == "__main__":
     keep_alive()
