@@ -23,7 +23,7 @@ def keep_alive():
 # --- BOT SOZLAMALARI ---
 TOKEN = "8721093015:AAGpOgNz4npcO2fA-rNdMecN4T0mMlI-Y6A" 
 bot = telebot.TeleBot(TOKEN)
-BOT_USERNAME = "@ozbemediarobot" # Sizning botingiz useri
+BOT_USERNAME = "@uzbemediarobot" # Sizning botingiz useri
 
 if not os.path.exists('downloads'):
     os.makedirs('downloads')
