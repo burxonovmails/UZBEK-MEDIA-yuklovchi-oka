@@ -6,7 +6,7 @@ from telebot import types
 from flask import Flask
 from threading import Thread
 
-# --- RENDER SERVERINI UYG'OQ TUTISH ---
+# --- RENDER SERVERINI UYG'OQ TUTiSH ---
 app = Flask('')
 @app.route('/')
 def home(): return "Bot is Active!"
