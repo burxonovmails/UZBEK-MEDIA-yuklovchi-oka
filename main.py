@@ -25,7 +25,9 @@ TOKEN = "8721093015:AAGpOgNz4npcO2fA-rNdMecN4T0mMlI-Y6A"
 bot = telebot.TeleBot(TOKEN)
 BOT_USERNAME = "@uzbemediarobot"
 
-# --- TURBO QIDIRUV SOZLAMALARI ---
+if not os.path.exists('downloads'):
+    os.makedirs('downloads')
+
 YTDL_OPTS = {
     'format': 'bestaudio/best',
     'outtmpl': 'downloads/%(title)s.%(ext)s',
@@ -33,15 +35,12 @@ YTDL_OPTS = {
     'quiet': True,
     'no_warnings': True,
     'max_filesize': 50 * 1024 * 1024,
-    'socket_timeout': 15, # 15 soniyadan oshsa to'xtatadi
-    'source_address': '0.0.0.0', # IPv4 ulanishni tezlashtiradi
-    'geo_bypass': True,
-    'default_search': 'ytsearch1:',
+    'http_headers': {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+    }
 }
 
-if not os.path.exists('downloads'):
-    os.makedirs('downloads')
-
+# --- MENU TUGMALARI ---
 def main_keyboard():
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
     markup.add(types.KeyboardButton("🔍 Nom orqali qidirish"))
@@ -49,45 +48,62 @@ def main_keyboard():
 
 @bot.message_handler(commands=['start'])
 def start(message):
-    bot.send_message(message.chat.id, f"👋 Salom! Men {BOT_USERNAME} botiman.", reply_markup=main_keyboard())
+    bot.send_message(message.chat.id, 
+                     f"👋 **Nima gap bro . Hohlagan Saytingdan 1 sekundda video YUKLAB beraman.**\n\nLink yuboring yoki quyidagi tugmani bosing:", 
+                     parse_mode="Markdown", 
+                     reply_markup=main_keyboard())
 
+# --- QIDIRISH COMMANDASI ---
 @bot.message_handler(func=lambda m: m.text == "🔍 Nom orqali qidirish")
 def ask_search(message):
-    msg = bot.send_message(message.chat.id, "🎶 Musiqa nomini yozing:")
+    msg = bot.send_message(message.chat.id, "🎶 Musiqa nomi yoki ijrochisini yozing:", 
+                           reply_markup=types.ReplyKeyboardRemove())
+    # Foydalanuvchining keyingi yozgan xabarini kutadi
     bot.register_next_step_handler(msg, process_search)
 
 def process_search(message):
     query = message.text
-    if query == "/start": return start(message)
+    chat_id = message.chat.id
     
-    wait = bot.send_message(message.chat.id, "🔎 Qidirilmoqda (15-20 soniya kuting)...")
-    threading.Thread(target=download_core, args=(message.chat.id, f"ytsearch1:{query}", wait.message_id, False)).start()
+    if query == "/start": 
+        start(message)
+        return
 
+    wait = bot.send_message(chat_id, "🔎", reply_markup=main_keyboard())
+    threading.Thread(target=download_core, args=(chat_id, f"ytsearch1:{query}", wait.message_id, False)).start()
+
+# --- LINKLARNI TUTISH ---
 @bot.message_handler(func=lambda m: "http" in m.text)
 def handle_link(message):
-    wait = bot.send_message(message.chat.id, "📥 Link tahlil qilinmoqda...")
-    threading.Thread(target=download_core, args=(message.chat.id, message.text, wait.message_id, True)).start()
+    chat_id = message.chat.id
+    wait = bot.send_message(chat_id, "📥")
+    threading.Thread(target=download_core, args=(chat_id, message.text, wait.message_id, True)).start()
 
+# --- YUKLASH MARKAZI ---
 def download_core(chat_id, query, wait_id, is_link):
     try:
         with yt_dlp.YoutubeDL(YTDL_OPTS) as ydl:
-            # Faylni yuklash
             info = ydl.extract_info(query, download=True)
             entry = info['entries'][0] if 'entries' in info else info
             file_path = ydl.prepare_filename(entry)
-            title = entry.get('title', "Media")
+            title = entry.get('title', "Musiqa")
 
             with open(file_path, 'rb') as f:
                 if is_link:
+                    # Link bo'lsa video va audio yuborish
                     bot.send_video(chat_id, f, caption=f"🎬 {title}\n\n👤 {BOT_USERNAME}")
+                    f.seek(0) # Faylni boshidan o'qish
+                    bot.send_audio(chat_id, f, caption=f"🎵 {title}\n\n👤 {BOT_USERNAME}")
                 else:
+                    # Qidiruv bo'lsa faqat audio
                     bot.send_audio(chat_id, f, caption=f"🎵 {title}\n\n👤 {BOT_USERNAME}")
 
-            if os.path.exists(file_path): os.remove(file_path)
+            if os.path.exists(file_path):
+                os.remove(file_path)
             bot.delete_message(chat_id, wait_id)
 
     except Exception:
-        bot.edit_message_text("❌ Kechirasiz, qidiruv natija bermadi yoki vaqt tugadi.", chat_id, wait_id)
+        bot.edit_message_text("❌ Topilmadi yoki fayl juda katta (Max: 50MB).", chat_id, wait_id)
 
 if __name__ == "__main__":
     keep_alive()
